@@ -37,7 +37,7 @@ void MIDIInToControllerHandler::change_listeners_value(const juce::MidiMessage &
             is_controller = true;
             is_listen_to_this_type = true;
         }
-        else if (message_.isNoteOn() && _midi_message_type == LISTEN_TO_NOTES)
+        else if (message_.isNoteOnOrOff() && _midi_message_type == LISTEN_TO_NOTES)
         {
             is_note = true;
             is_listen_to_this_type = true;
@@ -103,7 +103,7 @@ void MIDIInToControllerHandler::change_listeners_value(const juce::MidiMessage &
                     }
                     else if (is_note)
                     {
-                        param->invert();
+                        param->set_value(message_.isNoteOn());
                         controller->on_param_via_changed();
                     }
                     else
@@ -496,7 +496,7 @@ void MIDIInToControllerMap::process_in(const juce::MidiMessage &message_)
     // PRE MESSAGE FILTER
     if (message_.isController())
         ;
-    else if (message_.isNoteOn())
+    else if (message_.isNoteOnOrOff())
         ;
     else if (message_.isSysEx())
     {
