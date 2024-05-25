@@ -22,6 +22,7 @@
 #include "PluginProcessor.h"
 
 #include <cstdint>
+#include <juce_core/juce_core.h> 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -198,6 +199,25 @@ template <class port_type> class MidiIOObject
     bool is_open() const { return _is_succesful_opend; }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiIOObject)
+
+    bool checkConnection()
+    {
+        if (!is_open()) {
+          return false;
+        }
+
+        // Check if the current device is still available
+        if (_at_dev_index < 0)
+            return false;
+
+        juce::StringArray availableDevices = port_type::getDevices();
+        if (_at_dev_index < availableDevices.size() &&
+            availableDevices[_at_dev_index] == _port_name)
+        {
+            return true;
+        }
+        return false;
+    }
 };
 
 class MidiInputObject : public MidiIOObject<juce::MidiInput>, public juce::MidiInputCallback
@@ -543,7 +563,7 @@ class MultiMIDIMessageOutputGuard
     JUCE_LEAK_DETECTOR(MultiMIDIMessageOutputGuard)
 };
 
-class MidiIOHandler
+class MidiIOHandler : public juce::Timer 
 {
     // --------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------
@@ -553,6 +573,7 @@ class MidiIOHandler
   private:
     AppInstanceStore *const _app_instance_store;
     juce::OwnedArray<MidiOutputObject> midi_outs;
+    void timerCallback();
 
   public:
     MidiInputObject midi_in;

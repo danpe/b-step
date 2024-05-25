@@ -37,6 +37,7 @@ MidiIOHandler::MidiIOHandler(AppInstanceStore *const app_instance_store_)
     midi_outs.add(new MidiOutputObject(app_instance_store_));
 
     midi_outs.minimiseStorageOverheads();
+    startTimer(2000);  // Start the timer with a 1000ms (1 second) interval
 
     if (!bstepIsStandalone)
     {
@@ -255,4 +256,39 @@ void MidiIOHandler::load_from_1_2(const juce::XmlElement &xml)
                    1);
     open_load_port(juce::String("midi-pad2-out-port"), xml, pad_2_out, _app_instance_store->editor,
                    1);
+}
+
+template <typename PortType>
+void checkAndReopenPort(PortType& port) {
+  if (port.port_name() == DISABLED_PORT) {
+    DBG("Ignoring disabled port");
+    return;
+  }
+  if (!port.checkConnection()) {
+    port.close_port();
+    if (port.open_port()) {
+      juce::Logger::writeToLog("Reconnected port: " + port.port_name());
+    } else {
+      juce::Logger::writeToLog("Failed to reconnect port: " + port.port_name());
+    }
+  } else {
+    DBG(port.port_name() + " is already open");
+  }
+}
+
+void MidiIOHandler::timerCallback() {
+    checkAndReopenPort(*midi_outs[0]);
+    checkAndReopenPort(midi_learn_in);
+
+    // Check and potentially reopen each port
+    //checkAndReopenPort(midi_in);
+    // for (auto& out : midi_outs) {
+    //     checkAndReopenPort(*out);
+    // }
+    //checkAndReopenPort(midi_learn_in);
+    //checkAndReopenPort(midi_learn_out);
+    // checkAndReopenPort(pad_1_in);
+    // checkAndReopenPort(pad_1_out);
+    // checkAndReopenPort(pad_2_in);
+    // checkAndReopenPort(pad_2_out);
 }
