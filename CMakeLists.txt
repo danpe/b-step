@@ -8,11 +8,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 project("B-Step" VERSION 2.1.0 LANGUAGES C CXX ASM)
 
+option(BSTEP_CLOCK_TESTS_ONLY "Build dependency-free host clock regression tests" OFF)
+if(BSTEP_CLOCK_TESTS_ONLY)
+  enable_testing()
+  add_subdirectory(tests)
+  return()
+endif()
+
 # Calculate bitness
 math(EXPR BITS "8*${CMAKE_SIZEOF_VOID_P}")
 message(STATUS "Targeting ${BITS}-bit configuration")
 
 option(BSTEP_COPY_PLUGIN_AFTER_BUILD "Copy JUCE Plugins after built" OFF)
+option(BSTEP_HOST_CLOCK_TRACE "Enable bounded test-only host clock capture" OFF)
 option(BSTEP_RELIABLE_VERSION_INFO "Update version info on every build (off: generate only at configuration time)" ON)
 
 set(BSTEP_JUCE_PATH "${CMAKE_SOURCE_DIR}/libs/JUCE" CACHE STRING "Path to JUCE library source tree")
@@ -114,6 +122,7 @@ file(GLOB_RECURSE BSTEP_RESOURCES
 juce_add_binary_data(B-Step-Binary SOURCES ${BSTEP_RESOURCES})
 
 target_compile_definitions(B-Step PUBLIC
+  BSTEP_HOST_CLOCK_TRACE=$<BOOL:${BSTEP_HOST_CLOCK_TRACE}>
   JUCE_ALSA=1
   JUCE_CHECK_MEMORY_LEAKS=0
   JUCE_DIRECTSOUND=1

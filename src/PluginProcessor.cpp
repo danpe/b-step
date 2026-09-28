@@ -16,6 +16,10 @@
 */
 
 #include "PluginProcessor.h"
+#include "HostClock.h"
+#if BSTEP_HOST_CLOCK_TRACE
+#include "HostClockTrace.h"
+#endif
 
 #include "AppParameterList.h"
 
@@ -1160,117 +1164,88 @@ MessageProcessor::~MessageProcessor()
 class VSTClockProcessor
 {
     GstepAudioProcessor *const _listener;
-    std::int64_t _last_absolute_clock;
-    bool _wasPlaying;
-    bool _was_over_zero;
-    float _last_speed_factor;
-    std::uint64_t _stop_positon;
+    bstep::HostClock _clock;
+#if BSTEP_HOST_CLOCK_TRACE
+    bstep::HostClockTrace _trace;
+#endif
 
   public:
-    void generate_clock_callbacks(const juce::AudioPlayHead::CurrentPositionInfo &lastPosInfo,
-                                  const juce::MidiBuffer *const midiBuffer, const int bufferSize,
+    void generate_clock_callbacks(const juce::AudioPlayHead::CurrentPositionInfo &host,
+                                  const juce::MidiBuffer *const, const int bufferSize,
                                   const double sampleRate)
     {
-        // TODO dont do anything if the last pos is same
-
-        if ((lastPosInfo.isPlaying || lastPosInfo.isRecording /*||  it can loop but not playing */))
-        {
-            if (lastPosInfo.timeInSamples + bufferSize < 0)
-                return;
-
-            if (!_wasPlaying)
-                _listener->on_vst_continue(lastPosInfo.timeInSamples);
-
-            // TODO THIS CAN BE UINT
-            std::uint64_t time_in_samples = lastPosInfo.timeInSamples;
-
-            // SPEED CHANGE SHOULD CHANGE POS
-            float speed_factor = double(_listener->speed) / APPDEF_ProcessorUserData::SPEED_DEVISOR;
-            if (_last_speed_factor != speed_factor)
-            {
-                USER_OUT(LOG_VST_TRANSPORT_EVENTS, "in::generate_clock_callbacks @@@ ",
-                         "changeSpeed", "", "");
-                _last_speed_factor = speed_factor;
-                _listener->on_vst_pos_jumped(time_in_samples);
-            }
-
-            double clocksPerSample =
-                double(lastPosInfo.bpm * 24.f / speed_factor) / double(sampleRate * 60.f);
-
-            std::int64_t syncSamplePos = time_in_samples;
-            std::int64_t clock;
-            // SEARCH FOR A CLOCK
-            for (int posInBuffer = 0; posInBuffer < bufferSize; ++posInBuffer)
-            {
-                clock =
-                    floor(clocksPerSample * double(syncSamplePos)) + 1; // +1 for future processing
-                if (clock != _last_absolute_clock)
+        bstep::HostPosition position;
+        position.samples = host.timeInSamples;
+        position.quarterNotes = host.ppqPosition;
+        position.bpm = host.bpm;
+        position.sampleRate = sampleRate;
+        position.speed = double(_listener->speed) / APPDEF_ProcessorUserData::SPEED_DEVISOR;
+        position.blockSize = bufferSize;
+        position.playing = host.isPlaying || host.isRecording;
+        position.looping = host.isLooping;
+        position.loopStart = host.ppqLoopStart;
+        position.loopEnd = host.ppqLoopEnd;
+#if BSTEP_HOST_CLOCK_TRACE
+        _trace.beginBlock(position);
+#endif
+        _clock.process(
+            position,
+            [this](bstep::HostTransport event, std::int64_t sample) {
+#if BSTEP_HOST_CLOCK_TRACE
+                _trace.record(1 + static_cast<int>(event), 0, 0);
+#endif
+                switch (event)
                 {
-                    // IS A JUMP ?
-                    if (clock > _last_absolute_clock + 1)
-                    {
-                        // JUMP >>
-                        if (lastPosInfo.isLooping)
-                            _listener->on_vst_loop_pos_jumped(time_in_samples);
-                        else
-                            _listener->on_vst_pos_jumped(time_in_samples);
-                    }
-                    else if (_last_absolute_clock - 1 > clock)
-                    {
-                        // << JUMP
-                        if (lastPosInfo.isLooping)
-                            _listener->on_vst_loop_pos_jumped(time_in_samples);
-                        else
-                            _listener->on_vst_pos_jumped(time_in_samples);
-                    }
-
-                    _last_absolute_clock = clock;
-                    _listener->on_new_vst_clock(posInBuffer, clock, sampleRate);
+                case bstep::HostTransport::start:
+                    _listener->on_vst_continue(sample);
+                    break;
+                case bstep::HostTransport::stop:
+                case bstep::HostTransport::invalid:
+                    _listener->on_vst_stopped(sample);
+                    break;
+                case bstep::HostTransport::loop:
+                    _listener->on_vst_loop_pos_jumped(sample);
+                    break;
+                case bstep::HostTransport::seek:
+                    _listener->on_vst_pos_jumped(sample);
+                    break;
                 }
-                syncSamplePos++;
-            }
+            },
+            [this, sampleRate](int offset, std::int64_t clock) {
+#if BSTEP_HOST_CLOCK_TRACE
+                _trace.record(10, offset, clock);
+#endif
+                _listener->on_new_vst_clock(offset, clock, sampleRate);
+            });
+#if BSTEP_HOST_CLOCK_TRACE
+        _trace.record(0, 0, 0);
+#endif
+    }
 
-            _wasPlaying = true;
-        }
-        else
+#if BSTEP_HOST_CLOCK_TRACE
+    void traceMidi(const juce::MidiBuffer &buffer)
+    {
+        for (const auto metadata : buffer)
         {
-            if (_wasPlaying)
+            const auto message = metadata.getMessage();
+            if (message.isNoteOnOrOff())
             {
-                // STOP
-                USER_OUT(LOG_VST_TRANSPORT_EVENTS,
-                         "in::generate_clock_callbacks @@@ wasRunning --- INFO::isPlaying; "
-                         "INFO::isRecording; INFO::isLooping;,",
-                         juce::String(lastPosInfo.isPlaying), juce::String(lastPosInfo.isRecording),
-                         juce::String(lastPosInfo.isLooping));
-                _listener->on_vst_stopped(lastPosInfo.timeInSamples);
-                _stop_positon = lastPosInfo.timeInSamples;
-            }
-
-            _wasPlaying = false;
-
-            if (lastPosInfo.timeInSamples != _stop_positon)
-            {
-                USER_OUT(LOG_VST_TRANSPORT_EVENTS,
-                         "in::generate_clock_callbacks @@@ changed position", "", "", "");
-                _stop_positon = lastPosInfo.timeInSamples;
-
-                _listener->on_vst_continue(_stop_positon);
+                const auto *bytes = message.getRawData();
+                const auto encoded = (bytes[0] << 16) | (bytes[1] << 8) | bytes[2];
+                _trace.record(20, metadata.samplePosition, encoded);
             }
         }
     }
+#endif
 
-    VSTClockProcessor(GstepAudioProcessor *const listener_);
+    VSTClockProcessor(GstepAudioProcessor *listener) : _listener(listener)
+    {
+        BOOT(VSTClockProcessor)
+    }
     ~VSTClockProcessor(){DOWN(PluginProcessor)}
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VSTClockProcessor)
 };
-
-VSTClockProcessor::VSTClockProcessor(GstepAudioProcessor *const listener_)
-    : _listener(listener_), _last_absolute_clock(-999999), _wasPlaying(false),
-      _last_speed_factor(0), _stop_positon(-999999)
-{
-    BOOT(PluginProcessor)
-}
 
 // ********************************************************************************************
 // ********************************************************************************************
@@ -1467,6 +1442,9 @@ void GstepAudioProcessor::processBlock(juce::AudioSampleBuffer &buffer_,
         }
     }
 
+#if BSTEP_HOST_CLOCK_TRACE
+    _clock->traceMidi(midi_messages_);
+#endif
     _current_buffer = nullptr;
 }
 

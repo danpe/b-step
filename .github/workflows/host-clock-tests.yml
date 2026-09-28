@@ -1,0 +1,19 @@
+name: Host clock regression tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  host-clock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure standalone tests with sanitizers
+        run: >-
+          cmake -S . -B clock-tests -DBSTEP_CLOCK_TESTS_ONLY=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+      - run: cmake --build clock-tests --parallel 2
+      - run: ctest --test-dir clock-tests --output-on-failure
