@@ -136,6 +136,11 @@ extern int bstepIsStandalone;
 
 inline static juce::File get_app_folder(const juce::String &sub_dirs_ = "")
 {
+    // A separate data root lets test hosts keep presets/settings isolated.
+    const auto override_root = juce::SystemStats::getEnvironmentVariable("BSTEP_DATA_DIR", "");
+    if (juce::File::isAbsolutePath(override_root))
+        return juce::File(override_root + sub_dirs_);
+
     juce::File file =
         juce::File(juce::File::getSpecialLocation(juce::File::PLATFORM_B_FOLDER).getFullPathName() +
                    juce::String(APP_ROOT_FOLDER + sub_dirs_))
